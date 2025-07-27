@@ -169,7 +169,14 @@ Checks if the smart contract value is equal to the value stored in the database.
 
 ```json
 {
-  "equal": true or false
+  "equal": true 
 }
 ```
 
+OR
+
+```json
+{
+  "equal": false
+}
+```
