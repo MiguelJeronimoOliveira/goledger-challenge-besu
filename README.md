@@ -1,248 +1,175 @@
 # GoLedger Challenge - Besu Edition
 
-On this challenge, you will interact with a Besu node. The goal is to create a simple application that will interact with a Besu node to transact in a smart contract, check the value of a smart contract variable and sync that value to an external database.
+This is the solution to the **GoLedger Challenge**, consisting of a REST API built in Go that interacts with a **Hyperledger Besu** blockchain network and a **PostgreSQL** database.
 
-To accomplish that, we recommend you use a UNIX-like machine (Linux/macOS). Besides that, we will need to install NPM/NPX, Hardhat and Docker.
+## Table of Contents
 
-## Install the prerequisites
+- [Project Architecture](#project-architecture)
+- [Prerequisites](#prerequisites)
+- [Setting up the Environment](#setting-up-the-environment)
+  - [1. Start the Besu Network](#1-start-the-besu-network)
+  - [2. Configure the API](#2-configure-the-api)
+  - [3. Start the PostgreSQL Database](#3-start-the-postgresql-database)
+  - [4. Install Go Dependencies](#4-install-go-dependencies)
+  - [5. Run the Application](#5-run-the-application)
+- [API Endpoints](#api-endpoints)
+  - [`GET /get`](#get-get)
+  - [`POST /set`](#post-set)
+  - [`POST /sync`](#post-sync)
+  - [`GET /check`](#get-check)
 
-- Install NPM and NPX (https://www.npmjs.com/get-npm)
-- Install Hardhat (https://hardhat.org/getting-started/)
-- Install Docker and Docker Compose (https://www.docker.com/)
-- Install Besu (https://besu.hyperledger.org/private-networks/get-started/install/binary-distribution)
-- Install Go (https://golang.org/dl/)
-- Fork the repository https://github.com/goledgerdev/goledger-challenge-besu 
-    - Fork it, do **NOT** clone it, since you will need to send us your forked repository
-	- If you cannot fork it, create a private repository and give access to `samuelvenzi`
 
-### Hardhat installation details
+## Project Architecture
 
-Hardhat is a development environment to compile, deploy, test, and debug your Ethereum software. It helps developers manage and automate the recurring tasks that are inherent to the process of building smart contracts and dApps.
+This project implements a Go application that interacts with a Hyperledger Besu blockchain network and a PostgreSQL database. The application exposes a REST API to manage a simple storage smart contract deployed on the blockchain and synchronize its value with the external database.
 
-To install Hardhat, you need to have Node.js installed. If you don't have it, you can download it [here](https://nodejs.org/).
+### Architecture Overview
 
-After installing Node.js, you can install Hardhat by running the following command:
+#### 1. Go Application (Backend)
 
-```bash
-npm install --save-dev hardhat
-```
+The core of the solution is a Go application organized into several packages, each with a specific responsibility:
 
-Note: Your system might require a slightly different command to install Hardhat. Check the [Hardhat installation guide](https://hardhat.org/getting-started/) for more information.
+- **main.go**: Entry point of the application. Loads environment variables, initializes the blockchain client, connects to the PostgreSQL database, and sets up the HTTP router.
 
-## Set up the environment
+- **config/config.go**: Loads configuration parameters from environment variables, such as the Besu node URL, smart contract address, private key for transactions, ABI file path, and PostgreSQL DSN.
 
-To set up the environment, you need to fork this repository. Make sure you have installed the requirements. To set up the environment, you need to run the following commands:
+- **contract/contract.go**: Provides the client for interacting with the Hyperledger Besu blockchain using the go-ethereum library to:
+
+  - Connect to the Ethereum node via RPC.
+  - Load the smart contract's ABI.
+  - Initialize a bound contract instance for interacting with the SimpleStorage smart contract.
+  - Implement methods to get the stored value and set a new value by sending a transaction.
+
+- **db/postgresDB.go**: Manages the PostgreSQL database using `database/sql` and `github.com/lib/pq` to:
+
+  - Open a connection using the provided DSN.
+  - Ensure the `storage` table exists (creating it if necessary).
+  - Initialize the table with a default value of `0` if empty.
+
+- **handler/handler.go**: Contains the HTTP handlers for the REST API. Coordinates between incoming requests, the blockchain client, and the database to implement business logic.
+
+- **router/router.go**: Sets up the API routes using `github.com/gin-gonic/gin`. Maps endpoints to their corresponding handlers.
+
+## Prerequisites
+
+Ensure the following tools are installed on your system:
+
+- [Node.js and NPX](https://www.npmjs.com/get-npm)
+- [Docker and Docker Compose](https://www.docker.com/)
+- [Hyperledger Besu](https://besu.hyperledger.org/private-networks/get-started/install/binary-distribution)
+- [Go (Golang)](https://golang.org/dl/)
+- `jq`
+	```	
+	sudo apt-get install jq
+	```
+## Setting up the Environment
+
+### 1. Start the Besu Network
+
+Navigate to the `/besu` folder and run the following script:
 
 ```bash
 cd besu
 ./startDev.sh
 ```
 
-This will bring up a local Besu netwwork with 4 nodes. You can check the logs of each node by running the following command:
+If the script exits the terminal before confirming the deployment, replace:
 
 ```bash
-docker logs -f besu_node-0
+npx hardhat ignition deploy ./ignition/modules/deploy.js --network besu << EOF
+y
+EOF
 ```
 
-This will also deploy a smart contract to the network. The contract is a simple storage contract that has a variable that can be set and get. Note that it will log the contracts address, which will be important later. If you want to check the contract's source code, you can find it in the `contracts` folder. The contract's ABI can be found in the `/besu/artifacts/contracts/SimpleStorage.sol/SimpleStorage.json` file.
+with:
 
-# The challenge
+```bash
+yes | npx hardhat ignition deploy ./ignition/modules/deploy.js --network besu
+```
 
-Your task is to create a simple application that interacts with a Besu blockchain network and an SQL database. The application should be implemented in Go and expose its functionality as either a REST API or a gRPC service.
+At the end of the execution, your **smart contract address** will be displayed in the terminal. Copy this address — you’ll need it in the next step.
 
-## Requirements
+### 2. Configure the API
 
-1. **Programming Language:**
-   - The application must be written in Go.
+- Navigate to the `/goledger-challenge` folder:
 
-2. **API Type:**
-   - Choose either REST or gRPC for the service interface.
-   - If implementing gRPC, enable reflection so we can test it using tools like Postman.
+```bash
+cd goledger-challenge
+```
 
-3. **Database Integration:**
-   - Use an SQL database (e.g., PostgreSQL or MySQL).
-   - Store the value of the smart contract variable in the database.
+- Open the `.env` file and set the `CONTRACT_ADDRESS` variable:
 
-4. **Endpoints:**
-   - The application should provide the following functionality via appropriately named endpoints or methods:
+```
+CONTRACT_ADDRESS=your_contract_address_here
+```
 
-     1. **SET:**
-        - Set a new value for the smart contract variable.
-        - The application should send this value to the deployed smart contract on the Besu network.
+### 3. Start the PostgreSQL Database
 
-     2. **GET:**
-        - Retrieve the current value of the smart contract variable from the blockchain.
+```bash
+docker-compose up -d
+```
 
-     3. **SYNC:**
-        - Synchronize the value of the smart contract variable from the blockchain to the SQL database.
+### 4. Install Go Dependencies
 
-     4. **CHECK:**
-        - Compare the value stored in the database with the current value of the smart contract variable.
-        - Return `true` if they are the same, otherwise return `false`.
+```bash
+go mod tidy
+```
 
-   - **Endpoint Naming:**
-     - You may name the endpoints/methods as you see fit, provided their functionality meets the requirements outlined above.
+### 5. Run the Application
 
-   - **General Notes:**
-     - The Besu network will have a smart contract deployed that includes a single variable to store a value (similar to a SimpleStorage contract).
-     - Ensure the application handles blockchain interactions (reads/writes) correctly.
-     - Add appropriate error handling for all interactions (blockchain, database, and API).
+```bash
+go run .
+```
 
-## Deliverables
+## API Endpoints
 
-1. **Source Code:**
-   - The source code of the application should be hosted on a public GitHub repository forked from this one.
-   - Include a README file with instructions on how to run the application.
-2. **Documentation:**
-   - Provide a brief explanation of the application's architecture and how it interacts with the Besu network and the SQL database.
-   - Include any additional information you think is relevant.
-   - This can be done in the README file or as a separate Markdown file.
+the server is run in `http://localhost:8080`
 
-Remember to commit your changes to your forked repository. Commits will be used during the evaluation process.
+### `GET /get`
 
-## Interaction with the Besu network
+Returns the current value stored in the smart contract.
 
-To interact with the Besu network, you can use the Go Ethereum client. Below we provide two functions that interact with the Besu network, one for writing data (`ExecContract`) and one for reading data (`CallContract`). Feel free to include and change this function in your application.
+**Response:**
 
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"log/slog"
-	"strings"
-	"time"
-
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
-)
-
-func ExecContract() {
-	abi, err := abi.JSON(strings.NewReader("REPLACE: abi JSON as string goes here")) // found under besu/artifacts/contracts/SimpleStorage.sol/SimpleStorage.json
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := ethclient.DialContext(ctx, "REPLACE: network URL") // e.g., http://localhost:8545
-	if err != nil {
-		log.Fatalf("error dialing node: %v", err)
-	}
-
-	slog.Info("querying chain id")
-
-	chainId, err := client.ChainID(ctx)
-	if err != nil {
-		log.Fatalf("error querying chain id: %v", err)
-	}
-	defer client.Close()
-
-	contractAddress := common.HexToAddress("REPLACE: contract address") // will be returned during startDev.sh execution
-
-	boundContract := bind.NewBoundContract(
-		contractAddress,
-		abi,
-		client,
-		client,
-		client,
-	)
-
-	priv, err := crypto.HexToECDSA("REPLACE: private key") // this can be found in the genesis.json file
-	if err != nil {
-		log.Fatalf("error loading private key: %v", err)
-	}
-
-	auth, err := bind.NewKeyedTransactorWithChainID(priv, chainId)
-	if err != nil {
-		log.Fatalf("error creating transactor: %v", err)
-	}
-
-	tx, err := boundContract.Transact(auth, "REPLACE: method name")
-	if err != nil {
-		log.Fatalf("error transacting: %v", err)
-	}
-
-	fmt.Println("waiting until transaction is mined",
-		"tx", tx.Hash().Hex(),
-	)
-
-	receipt, err := bind.WaitMined(
-		context.Background(),
-		client,
-		tx,
-	)
-	if err != nil {
-		log.Fatalf("error waiting for transaction to be mined: %v", err)
-	}
-
-	fmt.Printf("transaction mined: %v\n", receipt)
+```json
+{
+  "value": "<SMART_CONTRACT_VALUE>"
 }
 ```
 
-You can also use the following code to call `view` functions on the contract.
+### `POST /set`
 
-```go
-package main
+Sets a new value in the smart contract.
 
-import (
-	"context"
-	"fmt"
-	"strings"
-	"time"
+**Request body:**
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
-)
-
-func CallContract()  {
-	var result interface{}
-
-	abi, err := abi.JSON(strings.NewReader("REPLACE: abi JSON as string goes here")) // found under besu/artifacts/contracts/SimpleStorage.sol/SimpleStorage.json
-	if err != nil {
-		log.Fatalf("error parsing abi: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := ethclient.DialContext(ctx, "REPLACE: network URL") // e.g., http://localhost:8545
-	if err != nil {
-		log.Fatalf("error connecting to eth client: %v", err)
-	}
-	defer client.Close()
-
-	contractAddress := common.HexToAddress("REPLACE: contract address") // will be returned during startDev.sh execution
-	caller := bind.CallOpts{
-		Pending: false,
-		Context: ctx,
-	}
-
-	boundContract := bind.NewBoundContract(
-		contractAddress,
-		abi,
-		client,
-		client,
-		client,
-	)
-
-	var output []interface{}
-	err = boundContract.Call(&caller, &output, "REPLACE: method name")
-	if err != nil {
-		log.Fatalf("error calling contract: %v", err)
-	}
-	result = output
-
-	fmt.Println("Successfully called contract!", result)
+```json
+{
+  "value": "<VALUE>"
 }
 ```
 
-To complete the challenge, you must send us the link to your repository with the alterations you made.
+### `POST /sync`
+
+Fetches the smart contract value and persists it to the PostgreSQL database.
+
+**Response:**
+
+```json
+{
+  "synced_value": "<SMART_CONTRACT_VALUE>"
+}
+```
+
+### `GET /check`
+
+Checks if the smart contract value is equal to the value stored in the database.
+
+**Response:**
+
+```json
+{
+  "equal": true or false
+}
+```
+
